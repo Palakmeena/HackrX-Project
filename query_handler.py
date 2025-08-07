@@ -1,4 +1,3 @@
-from transformers import pipeline
 import re
 import json
 import os
