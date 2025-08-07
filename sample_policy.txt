@@ -1,0 +1,12 @@
+MEDICAL INSURANCE POLICY
+
+Coverage Details:
+- Knee surgeries are covered up to Rs. 1,00,000
+- Cardiac procedures covered up to Rs. 2,00,000
+- Minimum policy duration: 6 months for coverage
+- Age limit: 18-65 years
+- Coverage areas: Mumbai, Delhi, Pune, Bangalore
+
+Exclusions:
+- Cosmetic surgeries not covered
+- Pre-existing conditions require 2-year waiting period
