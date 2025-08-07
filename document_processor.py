@@ -6,137 +6,79 @@ from typing import List
 
 class DocumentProcessor:
     def __init__(self):
-        # Increased chunk size for better policy clause retention
-        self.chunk_size = 1000  # Increased from 200
-        self.chunk_overlap = 200  # Increased from 50
-        self.min_section_length = 50  # Minimum chars to consider a section
+        # Optimized for 4GB memory
+        self.chunk_size = 600  # Reduced from 1000
+        self.chunk_overlap = 100
+        self.min_section_length = 30
 
     def process_document(self, file_path: str) -> List[str]:
-        """Process document and return structured text chunks"""
+        """Process document with memory-efficient chunking"""
         try:
-            file_extension = os.path.splitext(file_path)[1].lower()
-            
-            if file_extension == '.pdf':
-                text = self._extract_pdf_text(file_path)
-            elif file_extension in ['.docx', '.doc']:
-                text = self._extract_docx_text(file_path)
-            elif file_extension == '.txt':
-                text = self._extract_txt_text(file_path)
-            else:
-                raise ValueError(f"Unsupported file type: {file_extension}")
-            
-            # Clean and structure the text
-            cleaned_text = self._clean_text(text)
-            
-            # Split into meaningful chunks
-            chunks = self._split_into_sections(cleaned_text)
-            
-            # Clean up temp file (but keep sample_policy.txt)
-            if os.path.exists(file_path) and "sample_policy" not in file_path:
-                os.remove(file_path)
-            
-            return chunks
-        
+            text = self._extract_text(file_path)
+            return self._split_into_chunks(text)
         except Exception as e:
-            print(f"Error processing document: {e}")
+            print(f"Document processing error: {str(e)}")
             return []
 
-    def _clean_text(self, text: str) -> str:
-        """Clean and normalize text"""
-        # Remove multiple spaces/newlines
-        text = re.sub(r'\s+', ' ', text)
-        # Standardize section headers
-        text = re.sub(r'\nSECTION\s+([A-Z])\)', r'\nSECTION \1) ', text)
-        return text.strip()
-
-    def _split_into_sections(self, text: str) -> List[str]:
-        """Split document into logical sections first, then into chunks"""
-        # First split by major sections
-        sections = re.split(r'(\nSECTION [A-Z]\)[^\n]*)', text)
-        
-        # Combine section headers with their content
-        structured_sections = []
-        current_section = ""
-        
-        for part in sections:
-            if re.match(r'\nSECTION [A-Z]\)', part):
-                if current_section:
-                    structured_sections.append(current_section)
-                current_section = part + " "
-            else:
-                current_section += part + " "
-        
-        if current_section:
-            structured_sections.append(current_section)
-
-        # Now split each section into sized chunks
-        final_chunks = []
-        for section in structured_sections:
-            if len(section) < self.min_section_length:
-                continue
-                
-            section_header = re.search(r'\nSECTION [A-Z]\)[^\n]*', section)
-            header = section_header.group(0) if section_header else "Policy Content"
-            
-            # Split section into sentences first for better context
-            sentences = re.split(r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?)\s', section)
-            
-            current_chunk = ""
-            for sentence in sentences:
-                if len(current_chunk) + len(sentence) < self.chunk_size:
-                    current_chunk += sentence + " "
-                else:
-                    if current_chunk.strip():
-                        final_chunks.append(f"{header}\n{current_chunk.strip()}")
-                    current_chunk = sentence + " "
-            
-            if current_chunk.strip():
-                final_chunks.append(f"{header}\n{current_chunk.strip()}")
-
-        return final_chunks
-
-    def _extract_txt_text(self, file_path: str) -> str:
-        """Extract text from .txt file with encoding handling"""
-        try:
-            with open(file_path, 'r', encoding='utf-8') as file:
-                return file.read()
-        except UnicodeDecodeError:
-            try:
-                with open(file_path, 'r', encoding='latin-1') as file:
-                    return file.read()
-            except Exception as e:
-                print(f"Error reading TXT: {e}")
-                return ""
+    def _extract_text(self, file_path: str) -> str:
+        """Unified text extraction"""
+        ext = os.path.splitext(file_path)[1].lower()
+        if ext == '.pdf':
+            return self._extract_pdf_text(file_path)
+        elif ext in ['.docx', '.doc']:
+            return self._extract_docx_text(file_path)
+        elif ext == '.txt':
+            return self._extract_txt_text(file_path)
+        else:
+            raise ValueError(f"Unsupported file type: {ext}")
 
     def _extract_pdf_text(self, file_path: str) -> str:
-        """Improved PDF text extraction with layout preservation"""
+        """Memory-efficient PDF extraction"""
         text = ""
-        try:
-            with open(file_path, 'rb') as file:
-                pdf_reader = PyPDF2.PdfReader(file)
-                for page in pdf_reader.pages:
-                    page_text = page.extract_text()
-                    if page_text:
-                        # Add section markers if detected
-                        if "SECTION" in page_text:
-                            text += "\n" + page_text
-                        else:
-                            text += page_text + "\n"
-        except Exception as e:
-            print(f"Error reading PDF: {e}")
+        with open(file_path, 'rb') as f:
+            reader = PyPDF2.PdfReader(f)
+            for page in reader.pages[:20]:  # Limit to first 20 pages
+                text += page.extract_text() + "\n"
         return text
 
     def _extract_docx_text(self, file_path: str) -> str:
-        """Extract text from Word document with formatting hints"""
-        text = ""
-        try:
-            doc = Document(file_path)
-            for para in doc.paragraphs:
-                # Preserve heading styles as section markers
-                if para.style.name.startswith('Heading'):
-                    text += f"\nSECTION {para.style.name[-1].upper()}) {para.text}\n"
+        """DOCX extraction with section detection"""
+        doc = Document(file_path)
+        return "\n".join(para.text for para in doc.paragraphs)
+
+    def _extract_txt_text(self, file_path: str) -> str:
+        """TXT with encoding fallback"""
+        for encoding in ['utf-8', 'latin-1']:
+            try:
+                with open(file_path, 'r', encoding=encoding) as f:
+                    return f.read()
+            except UnicodeDecodeError:
+                continue
+        raise ValueError("Failed to decode text file")
+
+    def _split_into_chunks(self, text: str) -> List[str]:
+        """Memory-optimized chunking"""
+        # First split by major sections
+        sections = re.split(r'(?=\nSECTION [A-Z]\)|\n\d+\.\s)', text)
+        chunks = []
+        
+        for section in sections:
+            if not section.strip() or len(section) < self.min_section_length:
+                continue
+                
+            # Split section into sentences
+            sentences = re.split(r'(?<=[.!?])\s+', section)
+            current_chunk = ""
+            
+            for sentence in sentences:
+                if len(current_chunk) + len(sentence) <= self.chunk_size:
+                    current_chunk += sentence + " "
                 else:
-                    text += para.text + "\n"
-        except Exception as e:
-            print(f"Error reading DOCX: {e}")
-        return text
+                    if current_chunk.strip():
+                        chunks.append(current_chunk.strip())
+                    current_chunk = sentence + " "
+            
+            if current_chunk.strip():
+                chunks.append(current_chunk.strip())
+                
+        return chunks[:500]  # Safety limit

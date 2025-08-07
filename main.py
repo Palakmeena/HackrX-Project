@@ -1,65 +1,48 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import JSONResponse
-from typing import List
-import uvicorn
-from models import QueryRequest, QueryResponse
 from document_processor import DocumentProcessor
 from query_handler import QueryHandler
 from vector_store import VectorStore
+import os
 
-# Initialize FastAPI app
-app = FastAPI(title="HackRx LLM Document Processing API", version="1.0.0")
+app = FastAPI()
 
-# Initialize components
-doc_processor = DocumentProcessor()
+# Initialize with memory limits
+processor = DocumentProcessor()
+vector_db = VectorStore()
 query_handler = QueryHandler()
-vector_store = VectorStore()
 
-@app.get("/")
-async def root():
-    return {"message": "HackRx LLM Document Processing API is running!"}
-
-@app.post("/upload-documents")
-async def upload_documents(files: List[UploadFile] = File(...)):
-    """Upload and process documents (PDF, Word, etc.)"""
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """Memory-constrained upload endpoint"""
     try:
-        processed_count = 0
-        for file in files:
-            # Save uploaded file temporarily
-            file_path = f"temp_{file.filename}"
-            with open(file_path, "wb") as buffer:
-                content = await file.read()
-                buffer.write(content)
-            
-            # Process document
-            chunks = doc_processor.process_document(file_path)
-            
-            # Store in vector database
-            vector_store.add_documents(chunks, file.filename)
-            processed_count += 1
+        # Save temporarily
+        temp_path = f"temp_{file.filename}"
+        with open(temp_path, "wb") as f:
+            f.write(await file.read())
         
-        return {"message": f"Successfully processed {processed_count} documents"}
-    
+        # Process in chunks
+        chunks = processor.process_document(temp_path)
+        if not chunks:
+            return JSONResponse({"error": "Processing failed"}, status_code=400)
+            
+        vector_db.add_documents(chunks)
+        return {"message": f"Processed {len(chunks)} chunks"}
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing documents: {str(e)}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
 
-@app.post("/process-query", response_model=QueryResponse)
-async def process_query(request: QueryRequest):
-    """Process natural language query and return structured response"""
+@app.post("/query")
+async def handle_query(query: str):
+    """Optimized query endpoint"""
     try:
-        # Parse the query
-        structured_query = query_handler.parse_query(request.query)
-        
-        # Search for relevant documents
-        relevant_chunks = vector_store.search(request.query, top_k=5)
-        
-        # Make decision using LLM
-        decision = query_handler.make_decision(request.query, structured_query, relevant_chunks)
-        
-        return QueryResponse(**decision)
-    
+        relevant_chunks = vector_db.search(query)
+        if not relevant_chunks:
+            return {"decision": "rejected", "justification": "No matching clauses"}
+            
+        return query_handler.make_decision(query, relevant_chunks)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
-
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+        return {"error": str(e)}
